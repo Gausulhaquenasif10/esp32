@@ -2,137 +2,185 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NHM Real-Time Navigator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NHM Navigator Mobile</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; background: #111; }
-        #ui {
-            position: absolute; top: 20px; left: 20px; z-index: 10;
-            background: rgba(0,0,0,0.8); padding: 15px; border-radius: 10px;
-            color: white; border: 1px solid #444;
+        body { margin: 0; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica; background: #050505; color: white; }
+        
+        /* UI Overlay */
+        #interface {
+            position: absolute; top: 0; left: 0; width: 100%; z-index: 10;
+            padding: 20px; box-sizing: border-box; pointer-events: none;
         }
+
+        .card {
+            background: rgba(20, 20, 20, 0.9);
+            backdrop-filter: blur(10px);
+            padding: 15px; border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            pointer-events: auto; margin-bottom: 10px;
+        }
+
         button {
-            display: block; width: 100%; margin: 5px 0; padding: 12px;
-            border: none; border-radius: 5px; font-weight: bold; cursor: pointer;
+            width: 100%; padding: 15px; border: none; border-radius: 8px;
+            font-size: 16px; font-weight: bold; cursor: pointer;
+            transition: transform 0.1s;
         }
-        .btn-connect { background: #00ff88; color: black; margin-bottom: 15px; }
-        .btn-zone { background: #333; color: white; border: 1px solid #555; }
-        #status {
-            position: absolute; bottom: 20px; left: 20px; right: 20px;
-            background: rgba(0,255,136,0.1); color: #00ff88;
-            padding: 10px; border: 1px solid #00ff88; border-radius: 5px;
-            text-align: center; font-family: monospace; font-size: 14px;
+
+        button:active { transform: scale(0.98); }
+
+        .btn-scan { background: #00ff88; color: #000; margin-bottom: 10px; }
+        .btn-manual { background: #333; color: #aaa; font-size: 12px; padding: 8px; margin-top: 5px; }
+
+        #status-display {
+            position: absolute; bottom: 30px; left: 20px; right: 20px;
+            background: rgba(0,0,0,0.8); border: 1px solid #00ff88;
+            padding: 12px; border-radius: 8px; text-align: center;
+            font-family: monospace; color: #00ff88; font-size: 13px;
         }
+
+        canvas { display: block; }
     </style>
 </head>
 <body>
 
-<div id="ui">
-    <div style="font-size:12px; opacity:0.6; margin-bottom:5px;">SYSTEM STATUS</div>
-    <button class="btn-connect" onclick="connectESP32()">SCAN FOR BEACON</button>
-    <div style="font-size:12px; opacity:0.6; margin:10px 0 5px 0;">MANUAL OVERRIDE</div>
-    <button class="btn-zone" onclick="setDestination('BLUE')">Blue Zone</button>
-    <button class="btn-zone" onclick="setDestination('RED')">Red Zone</button>
+<div id="interface">
+    <div class="card">
+        <div style="font-size: 10px; opacity: 0.5; margin-bottom: 8px; letter-spacing: 1px;">MUSEUM SMART NAVIGATION</div>
+        <button class="btn-scan" onclick="startNhmScan()">SCAN FOR NEARBY ZONE</button>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+            <button class="btn-manual" onclick="moveToZone('BLUE')">BLUE ZONE</button>
+            <button class="btn-manual" onclick="moveToZone('RED')">RED ZONE</button>
+        </div>
+    </div>
 </div>
 
-<div id="status">READY: STANDING IN HINTZE HALL</div>
+<div id="status-display">SYSTEM IDLE: STANDING IN HINTZE HALL</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
 
 <script>
-// --- 3D SCENE SETUP ---
+/** * 3D WORLD ENGINE 
+ */
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0a0a0a);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+scene.background = new THREE.Color(0x050505);
+scene.fog = new THREE.Fog(0x050505, 10, 80);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 camera.position.set(0, 30, 40);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-const light = new THREE.PointLight(0xffffff, 1, 100);
-light.position.set(0, 20, 10);
-scene.add(light);
-scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+// Lighting
+scene.add(new THREE.AmbientLight(0x404040, 2));
+const sun = new THREE.DirectionalLight(0xffffff, 1);
+sun.position.set(5, 10, 7.5);
+scene.add(sun);
 
-// --- MAP ELEMENTS ---
-function createZone(x, z, color) {
-    const geo = new THREE.BoxGeometry(16, 1, 16);
-    const mat = new THREE.MeshStandardMaterial({ color: color });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(x, 0, z);
-    scene.add(mesh);
-    return mesh.position;
-}
-
-const zones = {
-    HUB: new THREE.Vector3(0, 2, 0),
-    BLUE: createZone(0, -30, 0x0066ff),
-    RED: createZone(-30, 0, 0xff2200),
-    GREEN: createZone(30, 0, 0x00ff66),
-    ORANGE: createZone(0, 30, 0xff9900)
+/** * MAP CONFIGURATION 
+ */
+const zoneData = {
+    HUB:    { x: 0, z: 0, color: 0x444444, name: "Hintze Hall" },
+    BLUE:   { x: 0, z: -35, color: 0x0066ff, name: "Blue Zone" },
+    RED:    { x: -35, z: 0, color: 0xff3300, name: "Red Zone" },
+    GREEN:  { x: 35, z: 0, color: 0x00ff66, name: "Green Zone" },
+    ORANGE: { x: 0, z: 35, color: 0xff9900, name: "Orange Zone" }
 };
 
+// Create Floors
+Object.keys(zoneData).forEach(key => {
+    const data = zoneData[key];
+    const geo = new THREE.PlaneGeometry(18, 18);
+    const mat = new THREE.MeshStandardMaterial({ color: data.color, side: THREE.DoubleSide });
+    const floor = new THREE.Mesh(geo, mat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(data.x, 0, data.z);
+    scene.add(floor);
+    zoneData[key].pos = new THREE.Vector3(data.x, 2, data.z);
+});
+
+// User Marker
 const user = new THREE.Mesh(
-    new THREE.SphereGeometry(1.5, 16, 16),
+    new THREE.ConeGeometry(1.2, 3, 4),
     new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff })
 );
-user.position.y = 2;
+user.rotation.x = Math.PI;
 scene.add(user);
 
-let targetPos = zones.HUB;
+let targetPosition = zoneData.HUB.pos;
 
-// --- NAVIGATION ---
-function setDestination(key) {
-    if(zones[key]) {
-        targetPos = zones[key].clone();
-        targetPos.y = 2;
-        document.getElementById("status").innerText = "LOCATION: " + key + " ZONE";
+/** * NAVIGATION & BLUETOOTH 
+ */
+function moveToZone(zoneKey) {
+    if (zoneData[zoneKey]) {
+        targetPosition = zoneData[zoneKey].pos;
+        document.getElementById("status-display").innerText = "ARRIVED: " + zoneData[zoneKey].name;
     }
 }
 
-// --- BLUEFY / BLUETOOTH LOGIC ---
-async function connectESP32() {
-    const statusDiv = document.getElementById("status");
+async function startNhmScan() {
+    const status = document.getElementById("status-display");
+
+    // Check for Secure Context
+    if (!window.isSecureContext) {
+        alert("SECURITY ERROR: Web Bluetooth requires HTTPS. Please host this file on GitHub Pages.");
+        return;
+    }
+
+    if (!navigator.bluetooth) {
+        alert("BROWSER ERROR: Web Bluetooth not supported. Use Bluefy on iOS or Chrome on Android.");
+        return;
+    }
+
     try {
-        statusDiv.innerText = "OPENING SCANNER...";
+        status.innerText = "SCANNING FOR NHM BEACONS...";
         
-        // requestDevice MUST be called directly by the button click
         const device = await navigator.bluetooth.requestDevice({
             filters: [{ namePrefix: "NHM_" }],
-            optionalServices: ['battery_service', 0x180F] 
+            optionalServices: ['battery_service', 0x180F]
         });
 
-        statusDiv.innerText = "CONNECTED TO: " + device.name;
-
-        // Auto-move based on name
+        status.innerText = "SYNCED: " + device.name;
+        
         const name = device.name.toUpperCase();
-        if (name.includes("BLUE")) setDestination("BLUE");
-        else if (name.includes("RED")) setDestination("RED");
-        else if (name.includes("GREEN")) setDestination("GREEN");
-        else if (name.includes("ORANGE")) setDestination("ORANGE");
+        if (name.includes("BLUE")) moveToZone("BLUE");
+        else if (name.includes("RED")) moveToZone("RED");
+        else if (name.includes("GREEN")) moveToZone("GREEN");
+        else if (name.includes("ORANGE")) moveToZone("ORANGE");
 
-    } catch (error) {
-        statusDiv.innerText = "ERROR: " + error.message;
-        // This alert is vital for debugging on mobile!
-        alert("Bluetooth Error: " + error.message);
+    } catch (err) {
+        status.innerText = "SCAN CANCELLED / ERROR";
+        console.error(err);
     }
 }
 
-// --- ANIMATION ---
+/** * RENDER LOOP 
+ */
 function animate() {
     requestAnimationFrame(animate);
-    user.position.lerp(targetPos, 0.05);
+
+    // Smooth Glide
+    user.position.lerp(targetPosition, 0.05);
+
+    // Camera follow
+    const idealCam = new THREE.Vector3(user.position.x, 35, user.position.z + 45);
+    camera.position.lerp(idealCam, 0.03);
     camera.lookAt(user.position);
+
     renderer.render(scene, camera);
 }
-animate();
 
 window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
+
+animate();
 </script>
 </body>
 </html>
